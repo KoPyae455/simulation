@@ -1,0 +1,17 @@
+"""
+Top-level API router.
+
+Aggregates every module's router under one object so app.main only
+ever mounts a single router. New modules (agent, memory, cognition,
+world) register their routers here as they gain endpoints -- main.py
+never needs to change again for routing purposes.
+"""
+
+from fastapi import APIRouter
+
+from app.api.health import router as health_router
+from app.api.agents import router as agents_router
+
+api_router = APIRouter()
+api_router.include_router(health_router, tags=["health"])
+api_router.include_router(agents_router, tags=["agents"])
