@@ -27,6 +27,26 @@ export interface HealthStatus {
   environment: string;
 }
 
+export interface SimulationStatus {
+  current_tick: number;
+  current_simulation_datetime: string;
+  is_running: boolean;
+}
+
+export interface SimulationStepResult extends SimulationStatus {
+  agents_updated: number;
+}
+
+export interface AgentDecisionLog {
+  id: string;
+  timestamp: string;
+  agent_id: string;
+  agent_name: string;
+  action: string;
+  reason: string;
+  internal_state_snapshot: AgentNeeds;
+}
+
 export interface ApiErrorResponse {
   error_code?: string;
   message?: string;

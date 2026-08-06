@@ -8,12 +8,24 @@ explicit instead of relying on import-time side effects.
 """
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.dependencies import get_simulation_service
 from app.api.error_handlers import register_exception_handlers
 from app.api.router import api_router
 from app.core.config import get_settings
+
+
+@asynccontextmanager
+async def application_lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Stop active simulation work cleanly when the application shuts down."""
+    try:
+        yield
+    finally:
+        await get_simulation_service().shutdown()
 
 
 def create_app() -> FastAPI:
@@ -26,6 +38,7 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=settings.app_version,
         debug=settings.debug,
+        lifespan=application_lifespan,
     )
 
     register_exception_handlers(app)

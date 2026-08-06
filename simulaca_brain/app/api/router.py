@@ -11,7 +11,11 @@ from fastapi import APIRouter
 
 from app.api.health import router as health_router
 from app.api.agents import router as agents_router
+from app.api.logs import router as logs_router
+from app.api.simulation import router as simulation_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(agents_router, tags=["agents"])
+api_router.include_router(simulation_router, tags=["simulation"])
+api_router.include_router(logs_router, tags=["logs"])
