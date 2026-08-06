@@ -12,6 +12,8 @@ from app.modules.agent.logs import AgentDecisionLog, DecisionLogStore
 from app.modules.agent.models import Agent, UpdateAgentRequest
 from app.modules.agent.repository import AgentRepository
 from app.modules.agent.state import AgentNeeds, NeedType
+from app.modules.memory.models import CreateMemoryRequest, MemoryType
+from app.modules.memory.service import MemoryService
 from app.modules.simulation.models import SimulationStatus, SimulationStepResult
 from app.modules.world.clock import SimulationClock
 
@@ -32,11 +34,18 @@ class SimulationService:
     _PAGE_SIZE = 200
     _AUTO_STEP_INTERVAL = timedelta(seconds=2)
 
-    def __init__(self, agents: AgentStateStore, logs: DecisionLogStore, clock: SimulationClock) -> None:
-        """Create a simulation coordinator with injected state and log dependencies."""
+    def __init__(
+        self,
+        agents: AgentStateStore,
+        logs: DecisionLogStore,
+        clock: SimulationClock,
+        memory_service: MemoryService | None = None,
+    ) -> None:
+        """Create a simulation coordinator with injected state, log, and memory dependencies."""
         self._agents = agents
         self._logs = logs
         self._clock = clock
+        self._memory_service = memory_service
         self._control_lock = asyncio.Lock()
         self._auto_run_task: asyncio.Task[None] | None = None
         self._last_goal: str | None = None
@@ -112,6 +121,29 @@ class SimulationService:
             )
             self._last_goal = goal
             self._last_action = action
+            if self._memory_service is not None:
+                self._memory_service.set_working_memory(
+                    agent.id,
+                    current_goal=goal,
+                    current_action=action,
+                    target=agent.name,
+                    started_at=tick.simulation_datetime,
+                )
+                self._memory_service.record(
+                    CreateMemoryRequest(
+                        agent_id=agent.id,
+                        memory_type=MemoryType.EPISODIC,
+                        content=f"{agent.name} performed {action}.",
+                        tick=tick.number,
+                        timestamp=tick.simulation_datetime,
+                        event_type=action,
+                        description=f"{agent.name} {action}ed.",
+                        location=agent.name,
+                        result=f"{goal} resolved",
+                        importance=0.3,
+                        metadata={"goal": goal, "action": action},
+                    )
+                )
             agents_updated += 1
 
         return SimulationStepResult(
@@ -208,10 +240,15 @@ class SimulationService:
         return max(0, min(100, value))
 
 
-def create_default_simulation_service(agents: AgentRepository, logs: DecisionLogStore) -> SimulationService:
+def create_default_simulation_service(
+    agents: AgentRepository,
+    logs: DecisionLogStore,
+    memory_service: MemoryService | None = None,
+) -> SimulationService:
     """Build the process-local simulation service using the default world clock settings."""
     return SimulationService(
         agents=agents,
         logs=logs,
         clock=SimulationClock(start_datetime=datetime.now(UTC)),
+        memory_service=memory_service,
     )

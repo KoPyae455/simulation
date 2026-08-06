@@ -6,10 +6,12 @@ import { AgentList } from "./components/AgentList";
 import { ApiStatus } from "./components/ApiStatus";
 import { ErrorMessage } from "./components/ErrorMessage";
 import { DecisionLogsPanel } from "./components/DecisionLogsPanel";
+import { MemoryPanel } from "./components/MemoryPanel";
 import { SimulationControls } from "./components/SimulationControls";
 import { useAgents } from "./hooks/useAgents";
 import { useApiStatus } from "./hooks/useApiStatus";
 import { useDecisionLogs } from "./hooks/useDecisionLogs";
+import { useMemories } from "./hooks/useMemories";
 import { useSimulationControls } from "./hooks/useSimulationControls";
 import type { Agent } from "./types/api";
 
@@ -18,8 +20,9 @@ export function App() {
   const { agents, isLoading, isMutating, error, reload, addAgent, removeAgent } = useAgents();
   const apiStatus = useApiStatus();
   const decisionLogs = useDecisionLogs();
+  const memories = useMemories(selectedAgentId);
   const simulation = useSimulationControls(async () => {
-    await Promise.all([reload(), decisionLogs.reload()]);
+    await Promise.all([reload(), decisionLogs.reload(), memories.reload()]);
   });
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? null,
@@ -32,10 +35,10 @@ export function App() {
     }
 
     const interval = window.setInterval(() => {
-      void Promise.all([reload(), decisionLogs.reload()]);
+      void Promise.all([reload(), decisionLogs.reload(), memories.reload()]);
     }, 2_000);
     return () => window.clearInterval(interval);
-  }, [decisionLogs.reload, reload, simulation.status?.is_running]);
+  }, [decisionLogs.reload, memories.reload, reload, simulation.status?.is_running]);
 
   async function handleCreate(name: string): Promise<void> {
     const agent = await addAgent({ name });
@@ -85,7 +88,7 @@ export function App() {
         </aside>
         <AgentDetail agent={selectedAgent} isDeleting={isMutating} onDelete={handleDelete} />
       </div>
-      <div className="mt-6">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <DecisionLogsPanel
           logs={decisionLogs.logs}
           isLoading={decisionLogs.isLoading}
@@ -93,6 +96,7 @@ export function App() {
           error={decisionLogs.error}
           onClear={decisionLogs.clear}
         />
+        <MemoryPanel memories={memories.memories} isLoading={memories.isLoading} error={memories.error} onRefresh={memories.reload} onDelete={memories.deleteMemory} />
       </div>
     </main>
   );

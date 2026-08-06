@@ -49,6 +49,15 @@ export interface AgentDecisionLog {
   internal_state_snapshot: AgentNeeds;
 }
 
+export interface AgentMemory {
+  id: string;
+  agent_id: string;
+  memory_type: string;
+  content: string;
+  created_at: string;
+  attributes: Record<string, unknown>;
+}
+
 export interface ApiErrorResponse {
   error_code?: string;
   message?: string;

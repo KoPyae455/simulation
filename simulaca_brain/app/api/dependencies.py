@@ -4,9 +4,12 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.core.events import InMemoryEventBus
 from app.modules.agent.logs import DecisionLogStore, SqliteDecisionLogRepository
 from app.modules.agent.repository import AgentRepository
 from app.modules.agent.service import AgentService
+from app.modules.memory.repository import SqliteMemoryRepository
+from app.modules.memory.service import MemoryService
 from app.modules.simulation.service import SimulationService, create_default_simulation_service
 
 
@@ -38,4 +41,16 @@ def get_decision_log_repository() -> SqliteDecisionLogRepository:
 @lru_cache
 def get_simulation_service() -> SimulationService:
     """Return the process-local simulation coordinator and its background-loop state."""
-    return create_default_simulation_service(get_agent_repository(), get_decision_log_repository())
+    return create_default_simulation_service(get_agent_repository(), get_decision_log_repository(), get_memory_service())
+
+
+@lru_cache
+def get_memory_repository() -> SqliteMemoryRepository:
+    repository = SqliteMemoryRepository(_sqlite_path(get_settings().database_url))
+    repository.initialize()
+    return repository
+
+
+@lru_cache
+def get_memory_service() -> MemoryService:
+    return MemoryService(get_memory_repository(), InMemoryEventBus())
