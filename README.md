@@ -5,9 +5,8 @@ An extensible FastAPI service. Milestone 1 implements validated agent CRUD only.
 ### Run locally
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+source .venv/bin/activate
+uv pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 

@@ -31,6 +31,8 @@ export interface SimulationStatus {
   current_tick: number;
   current_simulation_datetime: string;
   is_running: boolean;
+  current_goal: string | null;
+  current_action: string | null;
 }
 
 export interface SimulationStepResult extends SimulationStatus {

@@ -11,6 +11,8 @@ class SimulationStatus(SimulacaBaseModel):
     current_tick: int
     current_simulation_datetime: datetime
     is_running: bool
+    current_goal: str | None = None
+    current_action: str | None = None
 
 
 class SimulationStepResult(SimulationStatus):

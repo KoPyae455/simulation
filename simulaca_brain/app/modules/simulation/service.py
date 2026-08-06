@@ -1,6 +1,7 @@
 """Application service that advances agent state through simulation ticks."""
 
 import asyncio
+import math
 from collections.abc import Sequence
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -30,14 +31,6 @@ class SimulationService:
 
     _PAGE_SIZE = 200
     _AUTO_STEP_INTERVAL = timedelta(seconds=2)
-    _NEED_INCREMENTS: tuple[tuple[NeedType, int], ...] = (
-        (NeedType.HUNGER, 5),
-        (NeedType.THIRST, 4),
-        (NeedType.FATIGUE, 3),
-        (NeedType.SOCIAL, 1),
-        (NeedType.SAFETY, 1),
-        (NeedType.COMFORT, 2),
-    )
 
     def __init__(self, agents: AgentStateStore, logs: DecisionLogStore, clock: SimulationClock) -> None:
         """Create a simulation coordinator with injected state and log dependencies."""
@@ -46,6 +39,8 @@ class SimulationService:
         self._clock = clock
         self._control_lock = asyncio.Lock()
         self._auto_run_task: asyncio.Task[None] | None = None
+        self._last_goal: str | None = None
+        self._last_action: str | None = None
 
     async def step(self) -> SimulationStepResult:
         """Advance one tick and synchronously apply deterministic updates in a worker thread."""
@@ -83,6 +78,8 @@ class SimulationService:
             current_tick=self._clock.current_tick,
             current_simulation_datetime=self._clock.current_datetime,
             is_running=task is not None and not task.done(),
+            current_goal=self._last_goal,
+            current_action=self._last_action,
         )
 
     async def _run_automatically(self) -> None:
@@ -100,14 +97,29 @@ class SimulationService:
         agents_updated = 0
         for agent in self._all_agents():
             updated_needs = self._advance_needs(agent.needs)
+            goal = self._generate_goal(updated_needs)
+            action = self._resolve_action(goal)
+            self._execute_action(updated_needs, action)
             updated_agent = self._agents.update(agent.id, UpdateAgentRequest(needs=updated_needs))
-            self._logs.save(self._build_decision_log(updated_agent, tick.simulation_datetime))
+            self._logs.save(
+                self._build_decision_log(
+                    updated_agent,
+                    tick.simulation_datetime,
+                    goal=goal,
+                    action=action,
+                    reason=self._reason_for(goal, updated_needs),
+                )
+            )
+            self._last_goal = goal
+            self._last_action = action
             agents_updated += 1
 
         return SimulationStepResult(
             current_tick=tick.number,
             current_simulation_datetime=tick.simulation_datetime,
             is_running=self.status.is_running,
+            current_goal=self._last_goal,
+            current_action=self._last_action,
             agents_updated=agents_updated,
         )
 
@@ -123,40 +135,77 @@ class SimulationService:
             offset += len(page)
 
     def _advance_needs(self, needs: AgentNeeds) -> AgentNeeds:
-        """Return a copied needs state after applying one tick's urgency increments."""
+        """Return a copied needs state after applying one tick's rule-based urgency updates."""
         updated_needs = needs.model_copy(deep=True)
-        for need, increment in self._NEED_INCREMENTS:
-            updated_needs.increase(need, increment)
+        updated_needs.hunger = self._clamp(updated_needs.hunger + 1)
+        updated_needs.thirst = self._clamp(updated_needs.thirst + 2)
+        updated_needs.fatigue = self._clamp(updated_needs.fatigue + 1)
+        updated_needs.safety = self._clamp(updated_needs.safety + 0)
+        updated_needs.comfort = self._clamp(updated_needs.comfort + 0)
+        updated_needs.social = self._clamp(int(math.ceil(updated_needs.social + 0.2)))
         return updated_needs
 
-    @staticmethod
-    def _build_decision_log(agent: Agent, timestamp: datetime) -> AgentDecisionLog:
-        """Create a transparent rule-engine decision log from updated agent needs."""
-        critical_actions: tuple[tuple[NeedType, str, str], ...] = (
-            (NeedType.HUNGER, "EAT_FOOD", "Hunger reached"),
-            (NeedType.THIRST, "DRINK_WATER", "Thirst reached"),
-            (NeedType.FATIGUE, "REST", "Fatigue reached"),
-            (NeedType.SOCIAL, "SEEK_SOCIAL_CONTACT", "Social need reached"),
-            (NeedType.SAFETY, "SEEK_SAFETY", "Safety need reached"),
-            (NeedType.COMFORT, "IMPROVE_COMFORT", "Comfort need reached"),
-        )
-        action, reason = "WAIT", "No critical need detected."
-        for need, candidate_action, reason_prefix in critical_actions:
-            value = agent.needs.get(need)
-            if value >= 80:
-                action = candidate_action
-                reason = f"{reason_prefix} {value}/100."
-                break
+    def _generate_goal(self, needs: AgentNeeds) -> str:
+        """Return the single deterministic goal that best matches the current need priorities."""
+        if needs.thirst > 80:
+            return "drink"
+        if needs.hunger > 80:
+            return "eat"
+        if needs.fatigue > 80:
+            return "sleep"
+        return "idle"
 
+    def _resolve_action(self, goal: str) -> str:
+        """Map a goal to the required deterministic action."""
+        return {
+            "drink": "drink",
+            "eat": "eat",
+            "sleep": "sleep",
+            "idle": "idle",
+        }.get(goal, "idle")
+
+    def _execute_action(self, needs: AgentNeeds, action: str) -> None:
+        """Apply the chosen action directly to the agent's internal needs."""
+        if action == "eat":
+            needs.hunger = self._clamp(needs.hunger - 60)
+        elif action == "drink":
+            needs.thirst = self._clamp(needs.thirst - 70)
+        elif action == "sleep":
+            needs.fatigue = self._clamp(needs.fatigue - 80)
+
+    @staticmethod
+    def _reason_for(goal: str, needs: AgentNeeds) -> str:
+        if goal == "drink":
+            return f"Thirst exceeded threshold at {needs.thirst}/100."
+        if goal == "eat":
+            return f"Hunger exceeded threshold at {needs.hunger}/100."
+        if goal == "sleep":
+            return f"Fatigue exceeded threshold at {needs.fatigue}/100."
+        return "No critical need exceeded the threshold."
+
+    @staticmethod
+    def _build_decision_log(
+        agent: Agent,
+        timestamp: datetime,
+        *,
+        goal: str,
+        action: str,
+        reason: str,
+    ) -> AgentDecisionLog:
+        """Create a deterministic decision log from the completed rule pipeline."""
         return AgentDecisionLog(
             id=uuid4(),
             timestamp=timestamp,
             agent_id=agent.id,
             agent_name=agent.name,
             action=action,
-            reason=reason,
+            reason=f"Goal={goal}; {reason}",
             internal_state_snapshot=agent.needs.model_copy(deep=True),
         )
+
+    @staticmethod
+    def _clamp(value: int) -> int:
+        return max(0, min(100, value))
 
 
 def create_default_simulation_service(agents: AgentRepository, logs: DecisionLogStore) -> SimulationService:

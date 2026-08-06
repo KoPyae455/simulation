@@ -43,6 +43,15 @@ class SimulationEngine:
         with self._lock:
             return self._loop_thread is not None and self._loop_thread.is_alive()
 
+    @property
+    def tick_count(self) -> int:
+        """Return the number of completed simulation ticks."""
+        return self._clock.current_tick
+
+    def step(self) -> SimulationTick | None:
+        """Advance the world by one tick and return the resulting event."""
+        return self.run_tick()
+
     def run_tick(self) -> SimulationTick | None:
         """Execute one simulation cycle and return its event, or ``None`` when paused."""
         tick = self._clock.tick()

@@ -5,7 +5,7 @@ interface SimulationControlsProps {
   status: SimulationStatus | null;
   isLoading: boolean;
   error: string | null;
-  onStep: () => Promise<void>;
+  onStep: () => Promise<unknown>;
   onStart: () => Promise<void>;
   onStop: () => Promise<void>;
 }
@@ -32,7 +32,12 @@ export function SimulationControls({ status, isLoading, error, onStep, onStart, 
         <button className={`rounded px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${isRunning ? "bg-amber-700 hover:bg-amber-600" : "bg-emerald-700 hover:bg-emerald-600"}`} type="button" disabled={isLoading} onClick={() => void (isRunning ? onStop() : onStart())}>
           {isRunning ? "Stop Engine" : "Auto Run Engine"}
         </button>
-        {status !== null && <p className="text-sm text-slate-400">Tick {status.current_tick} · {new Date(status.current_simulation_datetime).toLocaleTimeString()}</p>}
+        {status !== null && (
+          <div className="text-sm text-slate-400">
+            <p>Tick {status.current_tick} · {new Date(status.current_simulation_datetime).toLocaleTimeString()}</p>
+            <p>Goal: <span className="text-slate-200">{status.current_goal ?? "idle"}</span> · Action: <span className="text-slate-200">{status.current_action ?? "idle"}</span></p>
+          </div>
+        )}
       </div>
       <p className="mt-3 text-xs text-slate-500">Auto-run advances simulation state on the backend every two seconds.</p>
       {error !== null && <div className="mt-3"><ErrorMessage message={error} /></div>}
