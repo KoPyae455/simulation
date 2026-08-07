@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, Query, status
 from app.api.dependencies import get_agent_service
 from app.modules.agent.models import Agent, CreateAgentRequest, UpdateAgentRequest
 from app.modules.agent.service import AgentService
+from app.modules.world.service import WorldPerceptionService, WorldKnowledgeService
+from app.api.dependencies import get_world_perception_service, get_world_knowledge_service
 
 router = APIRouter(prefix="/agents")
 
@@ -47,3 +49,32 @@ async def update_agent(
 async def delete_agent(agent_id: UUID, service: Annotated[AgentService, Depends(get_agent_service)]) -> None:
     """Delete an existing agent."""
     service.delete_agent(agent_id)
+
+
+@router.get("/{agent_id}/perception", response_model=dict)
+def agent_perception(
+    agent_id: UUID, perception: Annotated[WorldPerceptionService, Depends(get_world_perception_service)],
+) -> dict:
+    """Return the selected agent's current perception of the world."""
+    return perception.perceive(agent_id)
+
+
+@router.get("/{agent_id}/context", response_model=dict)
+def agent_context(
+    agent_id: UUID,
+    perception: Annotated[WorldPerceptionService, Depends(get_world_perception_service)],
+    knowledge: Annotated[WorldKnowledgeService, Depends(get_world_knowledge_service)],
+) -> dict:
+    """Return a minimal decision context for the agent combining memory and perception.
+
+    Full DecisionContext will be built later; return perception and basic location info for now.
+    """
+    p = perception.perceive(agent_id)
+    loc = None
+    if p.get("location"):
+        try:
+            loc = knowledge.get_location(UUID(p["location"]))
+            loc = loc.model_dump()
+        except Exception:
+            loc = None
+    return {"perception": p, "location": loc}

@@ -1,16 +1,50 @@
 ## Simulaca Brain
 
-An extensible FastAPI service. Milestone 1 implements validated agent CRUD only.
+An extensible FastAPI service with a built React dashboard served at `/` from the backend.
 
-### Run locally
+### Run locally (full project)
 
-```powershell
-source .venv/bin/activate
-uv pip install -r requirements.txt
-uvicorn app.main:app --reload
+1. Install dashboard dependencies and build the frontend assets:
+
+```bash
+cd simulaca_dashboard
+npm install
+npm run build
+cd ..
 ```
 
-The API is available at `http://127.0.0.1:8000/api/v1`; interactive documentation is at `/docs`.
+2. Activate the Python environment:
+
+```bash
+source simulaca_brain/.venv/bin/activate
+```
+
+3. Install backend dependencies if needed:
+
+```bash
+uv pip install -r simulaca_brain/requirements.txt
+```
+
+4. Start the backend server with uvicorn:
+
+```bash
+uv uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+5. Open the dashboard in your browser:
+
+```text
+http://127.0.0.1:8000/
+```
+
+6. Useful endpoints:
+
+- `http://127.0.0.1:8000/docs` — FastAPI docs
+- `http://127.0.0.1:8000/api/v1/health` — health check
+- `http://127.0.0.1:8000/api/v1/agents` — agent CRUD
+- `http://127.0.0.1:8000/api/v1/world` — world state summary
+
+> If your environment does not support the `uv` launcher, use the standard `pip` and `uvicorn` commands after activating the venv.
 
 ### Initial API
 

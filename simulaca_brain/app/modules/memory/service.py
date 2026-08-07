@@ -51,17 +51,30 @@ class MemoryService:
         """Remove one memory record from storage."""
         self._repository.delete(memory_id)
 
+    def recall(self, agent_id: UUID, goal: str, limit: int = 5) -> list[Memory]:
+        """Return the most relevant memories for ``goal`` in deterministic rank order."""
+        memories = self.list_memories(agent_id=agent_id, limit=100)
+        relevant = [memory for memory in memories if self._matches_goal(memory, goal)]
+        relevant.sort(key=lambda memory: self._recall_score(memory, goal), reverse=True)
+        return relevant[:limit]
+
     def set_working_memory(self, agent_id: UUID, *, current_goal: str, current_action: str, target: str, started_at: datetime) -> Memory:
         """Replace the agent's current working-memory snapshot with the latest state."""
         for existing in self.list_memories(agent_id=agent_id, limit=100):
             if existing.memory_type is MemoryType.WORKING:
                 self.delete_memory(existing.id)
 
+        recalled = self.recall(agent_id=agent_id, goal=current_goal)
+        selected_memory = recalled[0] if recalled else None
+        working_content = f"Current thought: {current_goal}/{current_action}"
+        if selected_memory is not None:
+            working_content = f"{working_content} | Selected memory: {selected_memory.content}"
+
         return self.record(
             CreateMemoryRequest(
                 agent_id=agent_id,
                 memory_type=MemoryType.WORKING,
-                content=f"Current thought: {current_goal}/{current_action}",
+                content=working_content,
                 tick=None,
                 timestamp=started_at,
                 event_type="working_memory",
@@ -69,6 +82,25 @@ class MemoryService:
                 location=target,
                 result="working_memory_updated",
                 importance=0.5,
-                metadata={"current_goal": current_goal, "current_action": current_action, "target": target},
+                metadata={
+                    "current_goal": current_goal,
+                    "current_action": current_action,
+                    "target": target,
+                    "recalled_memories": [memory.content for memory in recalled],
+                    "selected_memory": selected_memory.content if selected_memory is not None else None,
+                },
             )
         )
+
+    @staticmethod
+    def _matches_goal(memory: Memory, goal: str) -> bool:
+        goal_value = goal.lower()
+        if memory.event_type is not None and memory.event_type.lower() == goal_value:
+            return True
+        description = (memory.description or "").lower()
+        return goal_value in description or goal_value in (memory.content.lower())
+
+    @staticmethod
+    def _recall_score(memory: Memory, goal: str) -> tuple[int, float, datetime]:
+        relevance = 2 if (memory.event_type or "").lower() == goal.lower() else 1 if goal.lower() in (memory.content.lower() + " " + (memory.description or "").lower()) else 0
+        return (relevance, memory.importance, memory.timestamp or memory.created_at)

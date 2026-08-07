@@ -7,11 +7,13 @@ import { ApiStatus } from "./components/ApiStatus";
 import { ErrorMessage } from "./components/ErrorMessage";
 import { DecisionLogsPanel } from "./components/DecisionLogsPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
+import { RecallPanel } from "./components/RecallPanel";
 import { SimulationControls } from "./components/SimulationControls";
 import { useAgents } from "./hooks/useAgents";
 import { useApiStatus } from "./hooks/useApiStatus";
 import { useDecisionLogs } from "./hooks/useDecisionLogs";
 import { useMemories } from "./hooks/useMemories";
+import { useRecall } from "./hooks/useRecall";
 import { useSimulationControls } from "./hooks/useSimulationControls";
 import type { Agent } from "./types/api";
 
@@ -21,13 +23,14 @@ export function App() {
   const apiStatus = useApiStatus();
   const decisionLogs = useDecisionLogs();
   const memories = useMemories(selectedAgentId);
-  const simulation = useSimulationControls(async () => {
-    await Promise.all([reload(), decisionLogs.reload(), memories.reload()]);
-  });
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? null,
     [agents, selectedAgentId],
   );
+  const recall = useRecall(selectedAgent);
+  const simulation = useSimulationControls(async () => {
+    await Promise.all([reload(), decisionLogs.reload(), memories.reload(), recall.reload()]);
+  });
 
   useEffect(() => {
     if (!simulation.status?.is_running) {
@@ -35,10 +38,10 @@ export function App() {
     }
 
     const interval = window.setInterval(() => {
-      void Promise.all([reload(), decisionLogs.reload(), memories.reload()]);
+      void Promise.all([reload(), decisionLogs.reload(), memories.reload(), recall.reload()]);
     }, 2_000);
     return () => window.clearInterval(interval);
-  }, [decisionLogs.reload, memories.reload, reload, simulation.status?.is_running]);
+  }, [decisionLogs.reload, memories.reload, reload, recall.reload, simulation.status?.is_running]);
 
   async function handleCreate(name: string): Promise<void> {
     const agent = await addAgent({ name });
@@ -96,7 +99,10 @@ export function App() {
           error={decisionLogs.error}
           onClear={decisionLogs.clear}
         />
-        <MemoryPanel memories={memories.memories} isLoading={memories.isLoading} error={memories.error} onRefresh={memories.reload} onDelete={memories.deleteMemory} />
+        <div className="space-y-6">
+          <RecallPanel agent={selectedAgent} memories={recall.memories} />
+          <MemoryPanel memories={memories.memories} isLoading={memories.isLoading} error={memories.error} onRefresh={memories.reload} onDelete={memories.deleteMemory} />
+        </div>
       </div>
     </main>
   );

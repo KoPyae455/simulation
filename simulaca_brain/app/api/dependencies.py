@@ -11,6 +11,8 @@ from app.modules.agent.service import AgentService
 from app.modules.memory.repository import SqliteMemoryRepository
 from app.modules.memory.service import MemoryService
 from app.modules.simulation.service import SimulationService, create_default_simulation_service
+from app.modules.world.repository import SqliteWorldRepository
+from app.modules.world.service import WorldKnowledgeService, WorldPerceptionService
 
 
 def _sqlite_path(database_url: str) -> Path:
@@ -42,6 +44,21 @@ def get_decision_log_repository() -> SqliteDecisionLogRepository:
 def get_simulation_service() -> SimulationService:
     """Return the process-local simulation coordinator and its background-loop state."""
     return create_default_simulation_service(get_agent_repository(), get_decision_log_repository(), get_memory_service())
+
+
+@lru_cache
+def get_world_repository() -> SqliteWorldRepository:
+    repository = SqliteWorldRepository(_sqlite_path(get_settings().database_url))
+    repository.initialize()
+    return repository
+
+
+def get_world_knowledge_service() -> WorldKnowledgeService:
+    return WorldKnowledgeService(get_world_repository())
+
+
+def get_world_perception_service() -> WorldPerceptionService:
+    return WorldPerceptionService(get_world_knowledge_service(), get_world_repository())
 
 
 @lru_cache

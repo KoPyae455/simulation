@@ -11,7 +11,10 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.dependencies import get_simulation_service
 from app.api.error_handlers import register_exception_handlers
@@ -43,6 +46,10 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(api_router, prefix=settings.api_prefix)
+
+    dashboard_path = Path(__file__).resolve().parents[2] / "simulaca_dashboard" / "dist"
+    if dashboard_path.exists():
+        app.mount("/", StaticFiles(directory=str(dashboard_path), html=True), name="dashboard")
 
     return app
 

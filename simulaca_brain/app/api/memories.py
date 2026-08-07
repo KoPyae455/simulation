@@ -46,6 +46,17 @@ async def create_agent_memory(
     return MemorySummary(**memory.model_dump())
 
 
+@router.get("/{agent_id}/memory/recall", response_model=list[MemorySummary])
+async def recall_agent_memories(
+    agent_id: UUID,
+    service: Annotated[MemoryService, Depends(get_memory_service)],
+    goal: str = Query(default=""),
+) -> list[MemorySummary]:
+    """Return the newest and most relevant memories for a goal."""
+    recalled = service.recall(agent_id=agent_id, goal=goal, limit=5)
+    return [MemorySummary(**memory.model_dump()) for memory in recalled]
+
+
 @router.delete("/memories/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent_memory(
     memory_id: UUID,

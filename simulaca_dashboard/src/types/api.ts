@@ -54,6 +54,14 @@ export interface AgentMemory {
   agent_id: string;
   memory_type: string;
   content: string;
+  tick: number | null;
+  timestamp: string | null;
+  event_type: string | null;
+  description: string | null;
+  location: string | null;
+  result: string | null;
+  importance: number;
+  metadata: Record<string, unknown>;
   created_at: string;
   attributes: Record<string, unknown>;
 }

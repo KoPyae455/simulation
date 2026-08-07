@@ -19,3 +19,11 @@ export function createAgentMemory(agentId: string, content: string, memoryType: 
 export function deleteAgentMemory(memoryId: string): Promise<void> {
   return apiRequest<void>(`/memories/${memoryId}`, { method: "DELETE" });
 }
+
+export function recallAgentMemories(agentId: string | null, goal: string): Promise<AgentMemory[]> {
+  if (agentId === null) {
+    return Promise.resolve([]);
+  }
+  const query = new URLSearchParams({ goal });
+  return apiRequest<AgentMemory[]>(`/agents/${agentId}/memory/recall?${query.toString()}`);
+}
