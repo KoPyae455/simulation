@@ -33,11 +33,20 @@ class Goal:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanStep:
+    """A deterministic step inside a candidate plan."""
+
+    action: str
+    rationale: str
+    priority: int = 1
+
+
+@dataclass(frozen=True, slots=True)
 class Plan:
     """An ordered set of candidate steps for one goal."""
 
     goal: Goal
-    steps: tuple[str, ...] = ()
+    steps: tuple[PlanStep, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
