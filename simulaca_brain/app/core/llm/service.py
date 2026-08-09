@@ -11,7 +11,7 @@ def create_llm_provider(settings: Settings | None = None) -> LLMProvider:
     """Build the configured LLM provider without hard-coding a backend."""
     config = settings or get_settings()
     provider_name = config.llm_provider.lower()
-    base_url = config.llm_base_url or config.ollama_base_url
+    base_url = config.effective_llm_base_url
 
     if provider_name == "ollama":
         return OllamaProvider(

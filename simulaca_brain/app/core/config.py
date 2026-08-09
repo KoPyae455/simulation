@@ -58,6 +58,24 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     vllm_base_url: str = "http://localhost:8001"
 
+    # --- Active LLM provider (drives app.core.llm.service.create_llm_provider) ---
+    # Env: SIMULACA_LLM_PROVIDER, SIMULACA_LLM_MODEL, SIMULACA_LLM_BASE_URL,
+    #      SIMULACA_LLM_TIMEOUT_SECONDS
+    llm_provider: str = "ollama"
+    llm_model: str = "llama3.2:latest"
+    llm_base_url: str | None = None
+    llm_timeout_seconds: float = 10.0
+
+    # --- Cognition planner routing ---
+    # Env: SIMULACA_PLANNER_TYPE ("llm" or "rules"), SIMULACA_LLM_FALLBACK_TO_RULES
+    planner_type: str = "rules"
+    llm_fallback_to_rules: bool = True
+
+    @property
+    def effective_llm_base_url(self) -> str:
+        """Return the base URL used by the configured LLM provider."""
+        return self.llm_base_url or self.ollama_base_url
+
     @property
     def is_production(self) -> bool:
         """Whether the app is running in a production environment."""

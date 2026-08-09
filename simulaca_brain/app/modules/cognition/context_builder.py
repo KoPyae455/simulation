@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from app.modules.agent.models import Agent
+from app.modules.agent.state import AgentNeeds
 from app.modules.cognition.action_registry import ActionRegistry
 from app.modules.cognition.decision_context import DecisionContext
 from app.modules.cognition.goal_generator import GoalGenerator
@@ -35,9 +36,16 @@ class ContextBuilder:
         tick: int,
         simulation_datetime: datetime,
         goal: str | None = None,
+        needs: AgentNeeds | None = None,
     ) -> DecisionContext:
-        """Create a decision context for ``agent`` at the current tick."""
-        selected_goal = goal or self._goal_generator.generate(agent.needs)
+        """Create a decision context for ``agent`` at the current tick.
+
+        ``needs`` overrides ``agent.needs`` when the caller has already
+        advanced the agent's state for the current tick (e.g. the
+        simulation service passes the post-decay snapshot).
+        """
+        effective_needs = needs if needs is not None else agent.needs
+        selected_goal = goal or self._goal_generator.generate(effective_needs)
         perception = self._perception.perceive(agent.id)
         current_location = self._resolve_location(perception.get("location"))
         nearby_locations = self._resolve_locations(perception.get("nearby_locations", []))
@@ -51,14 +59,18 @@ class ContextBuilder:
             agent_name=agent.name,
             tick=tick,
             simulation_datetime=simulation_datetime,
-            needs=agent.needs.model_copy(deep=True),
+            needs=effective_needs.model_copy(deep=True),
             personality=None,
             current_location=current_location,
             current_goal=selected_goal,
             relevant_memories=relevant_memories,
             nearby_locations=nearby_locations,
             nearby_entities=nearby_entities,
-            world_facts={"connected_location_count": len(nearby_locations)},
+            world_facts={
+                "connected_location_count": len(nearby_locations),
+                "nearby_locations": [loc.name for loc in nearby_locations],
+                "nearby_entities": [entity.name for entity in nearby_entities],
+            },
             available_actions=list(ActionRegistry.list_actions()),
             action_constraints={"allowed_location_names": [loc.name for loc in nearby_locations]},
         )

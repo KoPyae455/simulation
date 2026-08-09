@@ -14,6 +14,7 @@ from app.modules.agent.repository import AgentRepository
 from app.modules.agent.state import AgentNeeds, NeedType
 from app.modules.memory.models import CreateMemoryRequest, MemoryType
 from app.modules.memory.service import MemoryService
+from app.modules.cognition.brain_service import BrainService
 from app.modules.simulation.models import SimulationStatus, SimulationStepResult
 from app.modules.world.clock import SimulationClock
 
@@ -40,12 +41,14 @@ class SimulationService:
         logs: DecisionLogStore,
         clock: SimulationClock,
         memory_service: MemoryService | None = None,
+        brain: BrainService | None = None,
     ) -> None:
         """Create a simulation coordinator with injected state, log, and memory dependencies."""
         self._agents = agents
         self._logs = logs
         self._clock = clock
         self._memory_service = memory_service
+        self._brain = brain
         self._control_lock = asyncio.Lock()
         self._auto_run_task: asyncio.Task[None] | None = None
         self._last_goal: str | None = None
@@ -106,17 +109,24 @@ class SimulationService:
         agents_updated = 0
         for agent in self._all_agents():
             updated_needs = self._advance_needs(agent.needs)
-            goal = self._generate_goal(updated_needs)
-            action = self._resolve_action(goal)
-            self._execute_action(updated_needs, action)
-            updated_agent = self._agents.update(agent.id, UpdateAgentRequest(needs=updated_needs))
+            if self._brain is not None:
+                goal, action, action_target, final_needs, reason = self._cognize(agent, updated_needs, tick)
+            else:
+                goal = self._generate_goal(updated_needs)
+                action = self._resolve_action(goal)
+                self._execute_action(updated_needs, action)
+                final_needs = updated_needs
+                action_target = None
+                reason = self._reason_for(goal, final_needs)
+
+            updated_agent = self._agents.update(agent.id, UpdateAgentRequest(needs=final_needs))
             self._logs.save(
                 self._build_decision_log(
                     updated_agent,
                     tick.simulation_datetime,
                     goal=goal,
-                    action=action,
-                    reason=self._reason_for(goal, updated_needs),
+                    action=action or "idle",
+                    reason=reason,
                 )
             )
             self._last_goal = goal
@@ -125,23 +135,23 @@ class SimulationService:
                 self._memory_service.set_working_memory(
                     agent.id,
                     current_goal=goal,
-                    current_action=action,
-                    target=agent.name,
+                    current_action=action or "idle",
+                    target=action_target or agent.name,
                     started_at=tick.simulation_datetime,
                 )
                 self._memory_service.record(
                     CreateMemoryRequest(
                         agent_id=agent.id,
                         memory_type=MemoryType.EPISODIC,
-                        content=f"{agent.name} performed {action}.",
+                        content=f"{agent.name} performed {action or 'idle'}.",
                         tick=tick.number,
                         timestamp=tick.simulation_datetime,
-                        event_type=action,
-                        description=f"{agent.name} {action}ed.",
-                        location=agent.name,
+                        event_type=action or "idle",
+                        description=f"{agent.name} {action or 'idle'}ed.",
+                        location=action_target or agent.name,
                         result=f"{goal} resolved",
                         importance=0.3,
-                        metadata={"goal": goal, "action": action},
+                        metadata={"goal": goal, "action": action or "idle"},
                     )
                 )
             agents_updated += 1
@@ -165,6 +175,33 @@ class SimulationService:
             if len(page) < self._PAGE_SIZE:
                 return agents
             offset += len(page)
+
+    def _cognize(
+        self,
+        agent: Agent,
+        needs: AgentNeeds,
+        tick,
+    ) -> tuple[str, str | None, str | None, AgentNeeds, str]:
+        """Run the cognitive pipeline for ``agent`` and execute one step.
+
+        Returns ``(goal, action, action_target, final_needs, reason)``.
+        The LLM never mutates agent state; the BrainService validates the
+        plan and executes exactly one step via the PlanExecutor.
+        """
+        assert self._brain is not None
+        outcome = self._brain.process_agent(
+            agent,
+            needs,
+            tick=tick.number,
+            simulation_datetime=tick.simulation_datetime,
+        )
+        return (
+            outcome.goal,
+            outcome.action,
+            outcome.target,
+            outcome.needs,
+            outcome.reason,
+        )
 
     def _advance_needs(self, needs: AgentNeeds) -> AgentNeeds:
         """Return a copied needs state after applying one tick's rule-based urgency updates."""
@@ -244,6 +281,7 @@ def create_default_simulation_service(
     agents: AgentRepository,
     logs: DecisionLogStore,
     memory_service: MemoryService | None = None,
+    brain: BrainService | None = None,
 ) -> SimulationService:
     """Build the process-local simulation service using the default world clock settings."""
     return SimulationService(
@@ -251,4 +289,5 @@ def create_default_simulation_service(
         logs=logs,
         clock=SimulationClock(start_datetime=datetime.now(UTC)),
         memory_service=memory_service,
+        brain=brain,
     )
