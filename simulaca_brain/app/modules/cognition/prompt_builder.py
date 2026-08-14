@@ -48,7 +48,7 @@ class PromptBuilder:
             "agent": {
                 "id": str(context.agent_id),
                 "name": context.agent_name,
-                "needs": context.needs.model_dump(),
+                "needs": context.needs.model_dump(mode="json"),
                 "personality": context.personality,
             },
             "simulation": {
@@ -56,9 +56,9 @@ class PromptBuilder:
                 "datetime": context.simulation_datetime.isoformat(),
             },
             "goal": context.current_goal,
-            "location": context.current_location.model_dump() if context.current_location else None,
-            "nearby_locations": [location.model_dump() for location in context.nearby_locations],
-            "nearby_entities": [entity.model_dump() for entity in context.nearby_entities],
+            "location": context.current_location.model_dump(mode="json") if context.current_location else None,
+            "nearby_locations": [location.model_dump(mode="json") for location in context.nearby_locations],
+            "nearby_entities": [entity.model_dump(mode="json") for entity in context.nearby_entities],
             "world_facts": context.world_facts,
             "relevant_memories": [
                 {

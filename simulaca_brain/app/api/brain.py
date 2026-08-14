@@ -9,12 +9,18 @@ from dataclasses import asdict
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.dependencies import get_brain_service, get_brain_state_store
+from app.api.dependencies import (
+    get_agent_event_service,
+    get_brain_service,
+    get_brain_state_store,
+)
 from app.core.config import Settings, get_settings
 from app.core.llm.service import get_llm_provider
 from app.core.schemas import SimulacaBaseModel
+from app.modules.activity.models import AgentEvent
+from app.modules.activity.service import AgentEventService
 from app.modules.cognition.brain_service import BrainService
 from app.modules.cognition.brain_state import BrainStateStore
 
@@ -110,3 +116,14 @@ def agent_plan(
         raise DecisionNotFoundError(agent_id)
     plan_payload = decision.to_public_dict()["plan"]
     return AgentPlanResponse(plan=plan_payload)
+
+
+@router.get("/agents/{agent_id}/events", response_model=list[AgentEvent])
+def agent_events(
+    agent_id: UUID,
+    events: Annotated[AgentEventService, Depends(get_agent_event_service)],
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> list[AgentEvent]:
+    """Return the agent's activity timeline in chronological display order."""
+    return events.list(agent_id=agent_id, limit=limit, offset=offset)

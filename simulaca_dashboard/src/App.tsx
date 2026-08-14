@@ -11,6 +11,7 @@ import { RecallPanel } from "./components/RecallPanel";
 import { SimulationControls } from "./components/SimulationControls";
 import { useAgents } from "./hooks/useAgents";
 import { useApiStatus } from "./hooks/useApiStatus";
+import { useAgentEvents } from "./hooks/useAgentEvents";
 import { useDecisionLogs } from "./hooks/useDecisionLogs";
 import { useMemories } from "./hooks/useMemories";
 import { useRecall } from "./hooks/useRecall";
@@ -28,8 +29,16 @@ export function App() {
     [agents, selectedAgentId],
   );
   const recall = useRecall(selectedAgent);
+  const activity = useAgentEvents(selectedAgentId);
   const simulation = useSimulationControls(async () => {
-    await Promise.all([reload(), decisionLogs.reload(), memories.reload(), recall.reload()]);
+    await Promise.all([
+      reload(),
+      apiStatus.reload(),
+      decisionLogs.reload(),
+      memories.reload(),
+      recall.reload(),
+      activity.reload(),
+    ]);
   });
 
   useEffect(() => {
@@ -38,10 +47,17 @@ export function App() {
     }
 
     const interval = window.setInterval(() => {
-      void Promise.all([reload(), decisionLogs.reload(), memories.reload(), recall.reload()]);
+      void Promise.all([
+        reload(),
+        apiStatus.reload(),
+        decisionLogs.reload(),
+        memories.reload(),
+        recall.reload(),
+        activity.reload(),
+      ]);
     }, 2_000);
     return () => window.clearInterval(interval);
-  }, [decisionLogs.reload, memories.reload, reload, recall.reload, simulation.status?.is_running]);
+  }, [activity.reload, decisionLogs.reload, memories.reload, reload, recall.reload, simulation.status?.is_running]);
 
   async function handleCreate(name: string): Promise<void> {
     const agent = await addAgent({ name });
@@ -89,7 +105,14 @@ export function App() {
           {error !== null && <ErrorMessage message={error} />}
           <AgentList agents={agents} selectedAgentId={selectedAgentId} isLoading={isLoading} onSelect={setSelectedAgentId} />
         </aside>
-        <AgentDetail agent={selectedAgent} isDeleting={isMutating} onDelete={handleDelete} />
+        <AgentDetail
+          agent={selectedAgent}
+          isDeleting={isMutating}
+          events={activity.events}
+          eventsLoading={activity.isLoading}
+          eventsError={activity.error}
+          onDelete={handleDelete}
+        />
       </div>
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <DecisionLogsPanel

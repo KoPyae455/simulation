@@ -1,5 +1,6 @@
 """Planner selection with optional rule-based fallback."""
 
+import logging
 from dataclasses import dataclass
 
 from app.modules.cognition.action_plan import ActionPlan
@@ -8,6 +9,8 @@ from app.modules.cognition.exceptions import InvalidPlanError, LLMPlanningError
 from app.modules.cognition.llm_planner import LLMPlanner
 from app.modules.cognition.plan_validator import PlanValidator
 from app.modules.cognition.planner import RuleBasedPlanner
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +72,13 @@ class CompositePlanner:
 
         try:
             result = self._llm_planner.plan(context)
+            logger.debug(
+                "LLM_PLANNER_SUCCESS agent=%s tick=%s goal=%s steps=%s",
+                context.agent_name,
+                context.tick,
+                result.plan.goal,
+                [{"action": s.action, "target": s.target} for s in result.plan.steps],
+            )
             return PlanningOutcome(
                 plan=result.plan,
                 planner_type=self._llm_planner.planner_type,
@@ -82,6 +92,14 @@ class CompositePlanner:
                 raise
             reason = getattr(exc, "message", str(exc))
             error_type = type(exc).__name__
+            logger.debug(
+                "LLM_PLANNER_FALLBACK agent=%s tick=%s goal=%s error=%s error_type=%s",
+                context.agent_name,
+                context.tick,
+                context.current_goal,
+                reason,
+                error_type,
+            )
             fallback = self._fallback(context, reason=reason)
             return PlanningOutcome(
                 plan=fallback.plan,

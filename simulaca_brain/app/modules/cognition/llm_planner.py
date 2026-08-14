@@ -1,5 +1,6 @@
 """LLM-backed cognitive planner."""
 
+import logging
 import time
 from dataclasses import dataclass
 
@@ -10,6 +11,8 @@ from app.modules.cognition.exceptions import LLMPlanningError
 from app.modules.cognition.llm_response_parser import parse_action_plan
 from app.modules.cognition.plan_validator import PlanValidator
 from app.modules.cognition.prompt_builder import PromptBuilder
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,8 +53,29 @@ class LLMPlanner:
 
         try:
             raw_response = self._provider.generate(user_prompt, system_prompt=system_prompt)
+            logger.debug(
+                "LLM_RESPONSE_RECEIVED agent=%s tick=%s goal=%s length=%s",
+                context.agent_name,
+                context.tick,
+                context.current_goal,
+                len(raw_response) if raw_response else 0,
+            )
             action_plan = parse_action_plan(raw_response)
+            logger.debug(
+                "LLM_PARSED_PLAN agent=%s tick=%s goal=%s steps=%s",
+                context.agent_name,
+                context.tick,
+                action_plan.goal,
+                [{"action": s.action, "target": s.target} for s in action_plan.steps],
+            )
             validated_plan = self._validator.validate(action_plan, context)
+            logger.debug(
+                "LLM_VALIDATED_PLAN agent=%s tick=%s goal=%s steps=%s",
+                context.agent_name,
+                context.tick,
+                validated_plan.goal,
+                [{"action": s.action, "target": s.target} for s in validated_plan.steps],
+            )
         except LLMPlanningError:
             raise
         except Exception as exc:

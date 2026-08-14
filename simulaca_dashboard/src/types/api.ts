@@ -66,6 +66,16 @@ export interface AgentMemory {
   attributes: Record<string, unknown>;
 }
 
+export interface AgentActivityEvent {
+  id: string;
+  agent_id: string;
+  tick: number;
+  timestamp: string;
+  event_type: string;
+  message: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface ApiErrorResponse {
   error_code?: string;
   message?: string;

@@ -19,11 +19,18 @@ class PlanValidator:
             allowed_locations[context.current_location.name.lower()] = context.current_location
 
         for index, step in enumerate(plan.steps):
-            self._validate_step(step, allowed_locations, step_index=index)
+            self._validate_step(step, allowed_locations, context=context, step_index=index)
 
         return plan
 
-    def _validate_step(self, step: ActionPlanStep, allowed_locations: dict, *, step_index: int) -> None:
+    def _validate_step(
+        self,
+        step: ActionPlanStep,
+        allowed_locations: dict,
+        context: DecisionContext,
+        *,
+        step_index: int,
+    ) -> None:
         if not ActionRegistry.is_valid(step.action):
             raise InvalidPlanError(
                 f"Unknown action '{step.action}' at step {step_index}.",

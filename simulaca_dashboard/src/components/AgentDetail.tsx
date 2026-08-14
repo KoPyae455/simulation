@@ -1,15 +1,20 @@
-import type { Agent } from "../types/api";
+import type { Agent, AgentActivityEvent } from "../types/api";
+import { ActivityPanel } from "./ActivityPanel";
+import { BrainPanel } from "./BrainPanel";
 import { StateCard } from "./StateCard";
 
 interface AgentDetailProps {
   agent: Agent | null;
   isDeleting: boolean;
+  events: AgentActivityEvent[];
+  eventsLoading: boolean;
+  eventsError: string | null;
   onDelete: (agent: Agent) => Promise<void>;
 }
 
 const stateLabels = ["health", "hunger", "thirst", "fatigue", "social", "safety", "comfort"] as const;
 
-export function AgentDetail({ agent, isDeleting, onDelete }: AgentDetailProps) {
+export function AgentDetail({ agent, isDeleting, events, eventsLoading, eventsError, onDelete }: AgentDetailProps) {
   if (agent === null) {
     return <section className="rounded-lg border border-dashed border-slate-700 p-6 text-sm text-slate-400">Select an agent to inspect its internal state.</section>;
   }
@@ -35,6 +40,9 @@ export function AgentDetail({ agent, isDeleting, onDelete }: AgentDetailProps) {
           {isDeleting ? "Deleting…" : "Delete agent"}
         </button>
       </div>
+      <div className="mt-6">
+        <BrainPanel agent={agent} />
+      </div>
       <dl className="mt-4 grid gap-2 text-sm text-slate-300 sm:grid-cols-2">
         <div><dt className="text-slate-500">Created</dt><dd>{new Date(agent.created_at).toLocaleString()}</dd></div>
         <div><dt className="text-slate-500">Updated</dt><dd>{agent.updated_at === null ? "Never" : new Date(agent.updated_at).toLocaleString()}</dd></div>
@@ -43,6 +51,8 @@ export function AgentDetail({ agent, isDeleting, onDelete }: AgentDetailProps) {
       <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {stateLabels.map((label) => <StateCard key={label} label={label} value={stateValues[label]} />)}
       </div>
+      <h3 className="mt-6 font-medium text-slate-200">Activity</h3>
+      <ActivityPanel events={events} isLoading={eventsLoading} error={eventsError} />
     </section>
   );
 }

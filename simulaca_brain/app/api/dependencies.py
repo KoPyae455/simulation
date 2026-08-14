@@ -6,6 +6,8 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.core.events import InMemoryEventBus
 from app.core.llm.service import get_llm_provider
+from app.modules.activity.repository import SqliteAgentEventRepository
+from app.modules.activity.service import AgentEventService
 from app.modules.agent.logs import DecisionLogStore, SqliteDecisionLogRepository
 from app.modules.agent.repository import AgentRepository
 from app.modules.agent.service import AgentService
@@ -17,6 +19,7 @@ from app.modules.cognition.plan_executor import PlanExecutor
 from app.modules.cognition.plan_validator import PlanValidator
 from app.modules.cognition.planner import RuleBasedPlanner
 from app.modules.cognition.planner_service import CompositePlanner
+from app.modules.cognition.reflection import ReflectionEngine
 from app.modules.memory.repository import SqliteMemoryRepository
 from app.modules.memory.service import MemoryService
 from app.modules.simulation.service import SimulationService, create_default_simulation_service
@@ -57,6 +60,8 @@ def get_simulation_service() -> SimulationService:
         get_decision_log_repository(),
         get_memory_service(),
         get_brain_service(),
+        get_reflection_engine(),
+        get_agent_event_service(),
     )
 
 
@@ -84,7 +89,25 @@ def get_memory_repository() -> SqliteMemoryRepository:
 
 @lru_cache
 def get_memory_service() -> MemoryService:
-    return MemoryService(get_memory_repository(), InMemoryEventBus())
+    return MemoryService(
+        get_memory_repository(),
+        InMemoryEventBus(),
+        event_service=get_agent_event_service(),
+    )
+
+
+@lru_cache
+def get_agent_event_repository() -> SqliteAgentEventRepository:
+    """Return the process-local SQLite repository for agent activity events."""
+    repository = SqliteAgentEventRepository(_sqlite_path(get_settings().database_url))
+    repository.initialize()
+    return repository
+
+
+@lru_cache
+def get_agent_event_service() -> AgentEventService:
+    """Return the process-local agent activity event service."""
+    return AgentEventService(get_agent_event_repository())
 
 
 @lru_cache
@@ -130,6 +153,16 @@ def get_brain_service() -> BrainService:
     return BrainService(
         context_builder=get_context_builder(),
         planner=get_composite_planner(),
-        executor=PlanExecutor(get_world_repository()),
+        executor=PlanExecutor(
+            get_world_repository(),
+            event_service=get_agent_event_service(),
+        ),
         store=get_brain_state_store(),
+        event_service=get_agent_event_service(),
     )
+
+
+@lru_cache
+def get_reflection_engine() -> ReflectionEngine:
+    """Return the process-local reflection engine using the configured LLM provider."""
+    return ReflectionEngine(provider=get_llm_provider())

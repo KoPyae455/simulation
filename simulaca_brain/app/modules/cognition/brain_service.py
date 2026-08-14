@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
+from app.modules.activity.models import AgentEventType
+from app.modules.activity.service import AgentEventService
 from app.modules.agent.models import Agent
 from app.modules.agent.state import AgentNeeds
 from app.modules.cognition.brain_state import (
@@ -21,6 +23,7 @@ from app.modules.cognition.brain_state import (
     LLMRequestLogEntry,
 )
 from app.modules.cognition.context_builder import ContextBuilder
+from app.modules.cognition.exceptions import InvalidPlanError
 from app.modules.cognition.plan_executor import PlanExecutor
 from app.modules.cognition.planner_service import CompositePlanner, PlanningOutcome
 
@@ -51,11 +54,13 @@ class BrainService:
         planner: CompositePlanner,
         executor: PlanExecutor,
         store: BrainStateStore,
+        event_service: AgentEventService | None = None,
     ) -> None:
         self._context_builder = context_builder
         self._planner = planner
         self._executor = executor
         self._store = store
+        self._event_service = event_service
 
     @property
     def store(self) -> BrainStateStore:
@@ -119,27 +124,60 @@ class BrainService:
             self._store.reset_step_index(agent.id)
             planned_this_tick = True
             self._record_llm_request(agent.id, tick, outcome)
+            self._emit_planning_events(agent, tick, outcome)
 
         step = PlanExecutor.current_step(plan, step_index)
         executed_action = None
         target: str | None = None
+        result = None
+        logger.debug(
+            "BRAIN_EXECUTE agent=%s tick=%s goal=%s planner=%s step_index=%s step_action=%s step_target=%s steps=%s",
+            agent.name,
+            tick,
+            goal,
+            planner_type,
+            step_index,
+            step.action if step else None,
+            step.target if step else None,
+            [{"action": s.action, "target": s.target} for s in plan.steps],
+        )
         if step is not None:
-            result = self._executor.execute_step(
-                step,
-                agent_id=agent.id,
-                needs=needs,
-                context=context,
-            )
-            executed_action = result.action
-            target = step.target
-            self._store.set_step_index(agent.id, step_index + 1)
-            if result.location_changed and result.new_location is not None:
-                logger.info(
-                    "Agent %s moved to %s at tick %s",
-                    agent.name,
-                    result.new_location.name,
-                    tick,
+            try:
+                result = self._executor.execute_step(
+                    step,
+                    agent_id=agent.id,
+                    needs=needs,
+                    context=context,
+                    tick=tick,
+                    timestamp=simulation_datetime,
                 )
+            except InvalidPlanError as exc:
+                logger.debug(
+                    "BRAIN_EXECUTE_FAIL agent=%s tick=%s action=%s target=%s error=%s",
+                    agent.name,
+                    tick,
+                    step.action if step else None,
+                    step.target if step else None,
+                    exc.message,
+                )
+                self._emit_error(agent, tick, exc.message)
+                self._store.reset_step_index(agent.id)
+                executed_action = "idle"
+                target = None
+                reasoning = f"Plan execution failed: {exc.message}"
+            else:
+                executed_action = result.action
+                target = step.target
+                self._store.set_step_index(agent.id, step_index + 1)
+                if result.location_changed and result.new_location is not None:
+                    logger.info(
+                        "Agent %s moved to %s at tick %s",
+                        agent.name,
+                        result.new_location.name,
+                        tick,
+                    )
+        elif step is None and reuse_existing:
+            self._store.set_step_index(agent.id, step_index + 1)
 
         completed = PlanExecutor.is_complete(plan, self._store.current_step_index(agent.id))
         status = "completed" if completed else "active"
@@ -176,6 +214,72 @@ class BrainService:
     def _plan(self, context) -> PlanningOutcome:
         """Route planning to the configured planner (LLM or rules + fallback)."""
         return self._planner.plan(context)
+
+    def _emit_planning_events(self, agent: Agent, tick: int, outcome: PlanningOutcome) -> None:
+        """Record concise decision / plan-created / fallback events (no chain-of-thought)."""
+        if self._event_service is None:
+            return
+        agent_id = agent.id
+        if outcome.status == "fallback":
+            self._event_service.record(
+                agent_id=agent_id,
+                tick=tick,
+                event_type=AgentEventType.FALLBACK,
+                message="LLM planner failed → RuleBasedPlanner used",
+                metadata={
+                    "reason": outcome.fallback_reason,
+                    "error_type": outcome.error_type,
+                },
+            )
+            return
+
+        self._event_service.record(
+            agent_id=agent_id,
+            tick=tick,
+            event_type=AgentEventType.DECISION,
+            message=f"Goal → {outcome.plan.goal.capitalize()}",
+            metadata={
+                "goal": outcome.plan.goal,
+                "planner": outcome.planner_type,
+                "model": outcome.model,
+            },
+        )
+        self._event_service.record(
+            agent_id=agent_id,
+            tick=tick,
+            event_type=AgentEventType.PLAN_CREATED,
+            message=self._summarize_steps(outcome.plan),
+            metadata={
+                "goal": outcome.plan.goal,
+                "plan_id": str(outcome.plan.plan_id),
+                "planner": outcome.planner_type,
+                "model": outcome.model,
+                "steps": [
+                    {"action": step.action, "target": step.target}
+                    for step in outcome.plan.steps
+                ],
+            },
+        )
+
+    @staticmethod
+    def _summarize_steps(plan) -> str:
+        """Render plan steps as a short human-readable summary."""
+        parts: list[str] = []
+        for step in plan.steps:
+            parts.append(f"{step.action} → {step.target}" if step.target else step.action)
+        return "; ".join(parts)
+
+    def _emit_error(self, agent: Agent, tick: int, message: str) -> None:
+        """Record an observable error event without leaking internals."""
+        if self._event_service is None:
+            return
+        self._event_service.record(
+            agent_id=agent.id,
+            tick=tick,
+            event_type=AgentEventType.ERROR,
+            message=f"Step failed: {message}",
+            metadata={"action": message},
+        )
 
     def _record_llm_request(
         self,

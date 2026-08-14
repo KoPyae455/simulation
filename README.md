@@ -635,6 +635,7 @@ Interactive docs at `/docs`.
 | DELETE | `/api/v1/agents/{agent_id}` | Delete one agent |
 | GET | `/api/v1/agents/{agent_id}/perception` | Agent's perceived location, nearby locations/entities |
 | GET | `/api/v1/agents/{agent_id}/context` | Minimal decision context (perception + location) |
+| GET | `/api/v1/agents/{agent_id}/events` | Activity timeline for one agent (`limit`, `offset` query params; ordered oldest → newest) |
 
 ### Memory
 
@@ -694,6 +695,7 @@ backend at `http://127.0.0.1:8000/`.
 | Create agent | Create an agent by name (initial needs are optional) |
 | Agent list | All agents, click to select |
 | Agent detail | Selected agent: name, id, created/updated, **needs** (hunger, thirst, fatigue, social, safety, comfort) |
+| Activity / Agent timeline | Selected agent: observable events over time (need changes, goal changes, planner decisions, plan creation, action execution, state changes, memory creation, errors, fallbacks) |
 | Decision logs | Recent `action` + `reason` for each agent tick |
 | Memory panel | Recent memories for the selected agent (delete supported) |
 | Recall panel | Recall goal + recalled memories for the selected agent |

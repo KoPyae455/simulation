@@ -6,15 +6,18 @@ from collections.abc import Sequence
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from app.modules.activity.models import AgentEventType
+from app.modules.activity.service import AgentEventService
 from app.modules.agent.logs import AgentDecisionLog, DecisionLogStore
 from app.modules.agent.models import Agent, UpdateAgentRequest
 from app.modules.agent.repository import AgentRepository
 from app.modules.agent.state import AgentNeeds, NeedType
 from app.modules.memory.models import CreateMemoryRequest, MemoryType
 from app.modules.memory.service import MemoryService
-from app.modules.cognition.brain_service import BrainService
+from app.modules.cognition.brain_service import AgentStepOutcome, BrainService
+from app.modules.cognition.reflection import EpisodeAction, EpisodeRecord, ReflectionEngine
 from app.modules.simulation.models import SimulationStatus, SimulationStepResult
 from app.modules.world.clock import SimulationClock
 
@@ -42,6 +45,8 @@ class SimulationService:
         clock: SimulationClock,
         memory_service: MemoryService | None = None,
         brain: BrainService | None = None,
+        reflection_engine: ReflectionEngine | None = None,
+        event_service: AgentEventService | None = None,
     ) -> None:
         """Create a simulation coordinator with injected state, log, and memory dependencies."""
         self._agents = agents
@@ -49,10 +54,13 @@ class SimulationService:
         self._clock = clock
         self._memory_service = memory_service
         self._brain = brain
+        self._reflection_engine = reflection_engine
+        self._event_service = event_service
         self._control_lock = asyncio.Lock()
         self._auto_run_task: asyncio.Task[None] | None = None
         self._last_goal: str | None = None
         self._last_action: str | None = None
+        self._agent_last_goals: dict[UUID, str] = {}
 
     async def step(self) -> SimulationStepResult:
         """Advance one tick and synchronously apply deterministic updates in a worker thread."""
@@ -102,15 +110,38 @@ class SimulationService:
 
     def _step_synchronously(self) -> SimulationStepResult:
         """Advance the clock and update all persisted agents in deterministic order."""
+        import logging as _logging
+        _log = _logging.getLogger("simulaca.debug.simulation")
         tick = self._clock.tick()
         if tick is None:
             raise RuntimeError("The simulation clock is paused.")
 
         agents_updated = 0
         for agent in self._all_agents():
-            updated_needs = self._advance_needs(agent.needs)
+            pre_advance = agent.needs
+            updated_needs = self._advance_needs(pre_advance)
+            self._emit_need_changes(agent, pre_advance, updated_needs, tick)
+
+            pre_action = updated_needs.model_copy(deep=True)
+            step_outcome: AgentStepOutcome | None = None
             if self._brain is not None:
-                goal, action, action_target, final_needs, reason = self._cognize(agent, updated_needs, tick)
+                try:
+                    step_outcome = self._cognize(agent, updated_needs, tick)
+                    goal = step_outcome.goal
+                    action = step_outcome.action
+                    action_target = step_outcome.target
+                    final_needs = step_outcome.needs
+                    reason = step_outcome.reason
+                except Exception as exc:
+                    _log.debug(
+                        "SIM_COGNIZE_FAIL agent=%s tick=%s needs=%s error=%s error_type=%s",
+                        agent.name,
+                        tick.number,
+                        updated_needs.model_dump(),
+                        str(exc),
+                        type(exc).__name__,
+                    )
+                    raise
             else:
                 goal = self._generate_goal(updated_needs)
                 action = self._resolve_action(goal)
@@ -118,6 +149,9 @@ class SimulationService:
                 final_needs = updated_needs
                 action_target = None
                 reason = self._reason_for(goal, final_needs)
+
+            self._emit_goal_changed(agent, goal, tick)
+            self._emit_state_changes(agent, pre_action, final_needs, action, tick)
 
             updated_agent = self._agents.update(agent.id, UpdateAgentRequest(needs=final_needs))
             self._logs.save(
@@ -154,6 +188,15 @@ class SimulationService:
                         metadata={"goal": goal, "action": action or "idle"},
                     )
                 )
+                if step_outcome is not None:
+                    self._reflect_completed_episode(
+                        agent=agent,
+                        outcome=step_outcome,
+                        tick_number=tick.number,
+                        tick_datetime=tick.simulation_datetime,
+                        initial_needs=pre_action,
+                        final_needs=final_needs,
+                    )
             agents_updated += 1
 
         return SimulationStepResult(
@@ -181,27 +224,180 @@ class SimulationService:
         agent: Agent,
         needs: AgentNeeds,
         tick,
-    ) -> tuple[str, str | None, str | None, AgentNeeds, str]:
+    ) -> AgentStepOutcome:
         """Run the cognitive pipeline for ``agent`` and execute one step.
-
-        Returns ``(goal, action, action_target, final_needs, reason)``.
-        The LLM never mutates agent state; the BrainService validates the
-        plan and executes exactly one step via the PlanExecutor.
         """
         assert self._brain is not None
-        outcome = self._brain.process_agent(
+        return self._brain.process_agent(
             agent,
             needs,
             tick=tick.number,
             simulation_datetime=tick.simulation_datetime,
         )
-        return (
-            outcome.goal,
-            outcome.action,
-            outcome.target,
-            outcome.needs,
-            outcome.reason,
+
+    def _reflect_completed_episode(
+        self,
+        *,
+        agent: Agent,
+        outcome: AgentStepOutcome,
+        tick_number: int,
+        tick_datetime: datetime,
+        initial_needs: AgentNeeds,
+        final_needs: AgentNeeds,
+    ) -> None:
+        """Run one reflection pass after a meaningful completed episode."""
+        if (
+            self._reflection_engine is None
+            or self._memory_service is None
+            or not outcome.completed
+            or outcome.decision.plan is None
+        ):
+            return
+
+        actions = [
+            EpisodeAction(action=step.action, target=step.target)
+            for step in outcome.decision.plan.steps
+        ]
+        episode = EpisodeRecord(
+            agent_id=agent.id,
+            agent_name=agent.name,
+            start_tick=max(0, tick_number - max(len(actions), 1) + 1),
+            end_tick=tick_number,
+            started_at=tick_datetime,
+            ended_at=tick_datetime,
+            goal=outcome.goal,
+            planner=outcome.planner_type,
+            initial_needs=initial_needs.model_copy(deep=True),
+            final_needs=final_needs.model_copy(deep=True),
+            actions=actions,
+            summary=outcome.reason,
+            success=outcome.action not in {None, "idle"},
         )
+
+        result = self._reflection_engine.reflect(episode)
+        self._emit_reflection_events(
+            agent_id=agent.id,
+            tick=tick_number,
+            episode=episode,
+            result=result,
+        )
+        for knowledge in result.output.knowledge:
+            self._memory_service.upsert_semantic_knowledge(
+                agent_id=agent.id,
+                subject=knowledge.subject,
+                predicate=knowledge.predicate,
+                object_value=knowledge.object,
+                confidence=knowledge.confidence,
+                observed_at=tick_datetime,
+                source_episode_id=str(episode.episode_id),
+                lesson=result.output.lessons[0] if result.output.lessons else None,
+            )
+
+    def _emit_reflection_events(self, *, agent_id: UUID, tick: int, episode: EpisodeRecord, result) -> None:
+        """Write concise reflection/knowledge events for timeline observability."""
+        if self._event_service is None:
+            return
+        source_suffix = ""
+        if result.error:
+            source_suffix = f" (fallback: {result.source})"
+        self._event_service.record(
+            agent_id=agent_id,
+            tick=tick,
+            event_type=AgentEventType.REFLECTION,
+            message=f"Episode reflected ({'success' if result.output.success else 'failure'}){source_suffix}: {result.output.summary}",
+            metadata={
+                "episode_id": str(episode.episode_id),
+                "goal": episode.goal,
+                "source": result.source,
+                "error": result.error,
+            },
+        )
+        for fact in result.output.knowledge:
+            self._event_service.record(
+                agent_id=agent_id,
+                tick=tick,
+                event_type=AgentEventType.KNOWLEDGE,
+                message=f"{fact.subject} {fact.predicate} {fact.object}",
+                metadata={
+                    "episode_id": str(episode.episode_id),
+                    "confidence": fact.confidence,
+                    "goal": episode.goal,
+                },
+            )
+
+    _NEED_LABELS = {
+        NeedType.HUNGER: "Hunger",
+        NeedType.THIRST: "Thirst",
+        NeedType.FATIGUE: "Fatigue",
+        NeedType.SAFETY: "Safety",
+        NeedType.COMFORT: "Comfort",
+        NeedType.SOCIAL: "Social",
+    }
+
+    def _emit_need_changes(self, agent: Agent, before: AgentNeeds, after: AgentNeeds, tick) -> None:
+        """Record need_changed events for values that changed during need decay."""
+        if self._event_service is None:
+            return
+        for need in NeedType:
+            old_value = before.get(need)
+            new_value = after.get(need)
+            if old_value == new_value:
+                continue
+            label = self._NEED_LABELS[need]
+            message = f"{label} {old_value} → {new_value}"
+            if old_value <= 80 < new_value:
+                message = f"{label} became critical: {new_value}"
+            self._event_service.record(
+                agent_id=agent.id,
+                tick=tick.number,
+                event_type=AgentEventType.NEED_CHANGED,
+                message=message,
+                metadata={"need": need.value, "before": old_value, "after": new_value},
+            )
+
+    def _emit_goal_changed(self, agent: Agent, goal: str, tick) -> None:
+        """Record a goal_changed event only when the agent's goal actually changed."""
+        if self._event_service is None:
+            return
+        if self._agent_last_goals.get(agent.id) == goal:
+            return
+        self._agent_last_goals[agent.id] = goal
+        self._event_service.record(
+            agent_id=agent.id,
+            tick=tick.number,
+            event_type=AgentEventType.GOAL_CHANGED,
+            message=f"Goal set: {goal}",
+            metadata={"goal": goal},
+        )
+
+    def _emit_state_changes(
+        self,
+        agent: Agent,
+        before: AgentNeeds,
+        after: AgentNeeds,
+        action: str | None,
+        tick,
+    ) -> None:
+        """Record state_changed events for need values altered by the executed action."""
+        if self._event_service is None:
+            return
+        for need in (NeedType.HUNGER, NeedType.THIRST, NeedType.FATIGUE):
+            old_value = before.get(need)
+            new_value = after.get(need)
+            if old_value == new_value:
+                continue
+            self._event_service.record(
+                agent_id=agent.id,
+                tick=tick.number,
+                event_type=AgentEventType.STATE_CHANGED,
+                message=f"{self._NEED_LABELS[need]} {old_value} → {new_value}",
+                metadata={
+                    "need": need.value,
+                    "before": old_value,
+                    "after": new_value,
+                    "action": action,
+                },
+            )
 
     def _advance_needs(self, needs: AgentNeeds) -> AgentNeeds:
         """Return a copied needs state after applying one tick's rule-based urgency updates."""
@@ -282,6 +478,8 @@ def create_default_simulation_service(
     logs: DecisionLogStore,
     memory_service: MemoryService | None = None,
     brain: BrainService | None = None,
+    reflection_engine: ReflectionEngine | None = None,
+    event_service: AgentEventService | None = None,
 ) -> SimulationService:
     """Build the process-local simulation service using the default world clock settings."""
     return SimulationService(
@@ -290,4 +488,6 @@ def create_default_simulation_service(
         clock=SimulationClock(start_datetime=datetime.now(UTC)),
         memory_service=memory_service,
         brain=brain,
+        reflection_engine=reflection_engine,
+        event_service=event_service,
     )
