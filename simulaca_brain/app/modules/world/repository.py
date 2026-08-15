@@ -7,7 +7,7 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 from app.core.exceptions import RepositoryError, EntityNotFoundError
-from app.modules.world.models import Location, Entity
+from app.modules.world.models import Location, Entity, Resource
 
 
 class WorldRepository(Protocol):
@@ -33,6 +33,18 @@ class WorldRepository(Protocol):
         ...
 
     def get_agent_location(self, agent_id: UUID) -> UUID | None:
+        ...
+
+    def create_resource(self, name: str, location_id: UUID, attributes: dict | None = None) -> Resource:
+        ...
+
+    def list_resources(self, location_id: UUID | None = None) -> list[Resource]:
+        ...
+
+    def get_resource(self, resource_id: UUID) -> Resource:
+        ...
+
+    def update_resource(self, resource: Resource) -> None:
         ...
 
 
@@ -62,6 +74,13 @@ class SqliteWorldRepository:
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS agent_locations (
                     agent_id TEXT PRIMARY KEY, location_id TEXT NOT NULL
+                )"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS resources (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, location_id TEXT NOT NULL,
+                    affordances_json TEXT NOT NULL, water_available INTEGER NOT NULL DEFAULT 1,
+                    food_quantity INTEGER NOT NULL DEFAULT 0
                 )"""
             )
 
@@ -149,6 +168,97 @@ class SqliteWorldRepository:
         except sqlite3.Error as exc:
             raise RepositoryError("Unable to get agent location") from exc
         return UUID(row["location_id"]) if row is not None else None
+
+    def create_resource(self, name: str, location_id: UUID, attributes: dict | None = None) -> Resource:
+        res_id = uuid4()
+        affs = attributes.get("affordances", []) if attributes else []
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO resources VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        str(res_id),
+                        name,
+                        str(location_id),
+                        json.dumps(affs),
+                        1 if attributes.get("water_available", True) else 0,
+                        attributes.get("food_quantity", 0),
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise RepositoryError("Unable to create resource") from exc
+        return Resource(
+            id=res_id,
+            name=name,
+            location_id=location_id,
+            affordances=set(affs) if affs else set(),
+            water_available=attributes.get("water_available", True),
+            food_quantity=attributes.get("food_quantity", 0),
+        )
+
+    def list_resources(self, location_id: UUID | None = None) -> list[Resource]:
+        import json
+        try:
+            with self._connect() as conn:
+                if location_id is not None:
+                    rows = conn.execute(
+                        "SELECT * FROM resources WHERE location_id = ? ORDER BY name ASC",
+                        (str(location_id),),
+                    ).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM resources ORDER BY name ASC").fetchall()
+        except sqlite3.Error as exc:
+            raise RepositoryError("Unable to list resources") from exc
+        return [
+            Resource(
+                id=UUID(r["id"]),
+                name=r["name"],
+                location_id=UUID(r["location_id"]),
+                affordances=set(json.loads(r["affordances_json"])) if json.loads(r["affordances_json"]) else set(),
+                water_available=bool(r["water_available"]),
+                food_quantity=int(r["food_quantity"]),
+            )
+            for r in rows
+        ]
+
+    def get_resource(self, resource_id: UUID) -> Resource:
+        import json
+        try:
+            with self._connect() as conn:
+                row = conn.execute("SELECT * FROM resources WHERE id = ?", (str(resource_id),)).fetchone()
+        except sqlite3.Error as exc:
+            raise RepositoryError("Unable to load resource") from exc
+        if row is None:
+            raise EntityNotFoundError("Resource", resource_id)
+        return Resource(
+            id=UUID(row["id"]),
+            name=row["name"],
+            location_id=UUID(row["location_id"]),
+            affordances=set(json.loads(row["affordances_json"])) if json.loads(row["affordances_json"]) else set(),
+            water_available=bool(row["water_available"]),
+            food_quantity=int(row["food_quantity"]),
+        )
+
+    def update_resource(self, resource: Resource) -> None:
+        import json
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """UPDATE resources SET
+                        name = ?, location_id = ?, affordances_json = ?, water_available = ?,
+                        food_quantity = ?
+                        WHERE id = ?""",
+                    (
+                        resource.name,
+                        str(resource.location_id),
+                        json.dumps(list(resource.affordances)),
+                        1 if resource.water_available else 0,
+                        resource.food_quantity,
+                        str(resource.id),
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise RepositoryError("Unable to update resource") from exc
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._database_path)

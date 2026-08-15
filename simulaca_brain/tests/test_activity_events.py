@@ -136,6 +136,10 @@ class FakeWorldRepository:
     def set_agent_location(self, agent_id: UUID, location_id: UUID) -> None:
         self.locations[agent_id] = location_id
 
+    def list_resources(self, location_id: UUID) -> list:
+        """Minimal resource listing for drink/eat checks."""
+        return []
+
 
 class FakeContextBuilder:
     def __init__(self, context: DecisionContext) -> None:

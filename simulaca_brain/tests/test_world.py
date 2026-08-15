@@ -56,3 +56,7 @@ def test_perception_reports_nearby(tmp_path) -> None:
     # nearby entities should include water
     ents = {e["name"] for e in p["nearby_entities"]}
     assert "Water" in ents
+    # nearby resources should be present (V0.9)
+    assert "nearby_resources" in p
+    res_names = {r["name"] for r in p["nearby_resources"]}
+    # Water entity should have been perceived as a resource at the river

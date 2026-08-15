@@ -33,6 +33,7 @@ class AgentDecisionMetadata:
     planner_type: str
     goal: str
     status: str
+    agent_status: str | None = None
     plan: ActionPlan | None = None
     executed_action: str | None = None
     latency_ms: int | None = None
@@ -65,6 +66,7 @@ class AgentDecisionMetadata:
             "planner": self.planner_type,
             "goal": self.goal,
             "status": self.status,
+            "agent_status": self.agent_status,
             "plan": plan_payload,
             "executed_action": self.executed_action,
             "latency_ms": self.latency_ms,

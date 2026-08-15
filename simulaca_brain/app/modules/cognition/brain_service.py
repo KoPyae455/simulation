@@ -126,7 +126,7 @@ class BrainService:
             self._record_llm_request(agent.id, tick, outcome)
             self._emit_planning_events(agent, tick, outcome)
 
-        step = PlanExecutor.current_step(plan, step_index)
+        step = plan.steps[step_index] if step_index < len(plan.steps) else None
         executed_action = None
         target: str | None = None
         result = None
